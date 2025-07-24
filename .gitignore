@@ -1,0 +1,13 @@
+.local
+.ssh
+.vscode-server
+.bash_history
+.bash_logout
+.bashrc
+.profile
+.cache
+.dotnet
+.profile
+.sudo_as_admin_successful
+.viminfo
+.wget-hsts

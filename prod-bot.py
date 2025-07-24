@@ -10,6 +10,7 @@ from enum import Enum
 import time
 import socket
 import json
+import math
 
 # ~~~~~============== CONFIGURATION  ==============~~~~~
 
@@ -108,34 +109,49 @@ class StateManager:
                 order_id,
             )
 
-def determine_sell(avg_stock, current_trades_buy, state_manager, THRESHOLD):
+def threshold_modifier(avg_stock, past_ten):
+    threshold = {}
+
+    for symbol, avg_price in avg_stock.items():
+        diff = abs(past_ten[symbol][0][0] - past_ten[symbol][-1][0])
+        if diff < 1:
+            threshold[symbol] = 6
+        elif diff < 4:
+            threshold[symbol] = 8
+        elif diff < 8:
+            threshold[symbol] = 10
+        elif diff < 12:
+            threshold[symbol] = 12
+        else:
+            threshold[symbol] = 15
+    
+    print("threshold", threshold)
+    return threshold
+
+def determine_sell(avg_stock, current_trades_buy, state_manager, threshold):
     # selling logic
+    print("checking sell")
     for symbol, avg_price in avg_stock.items():
         for current_trade in current_trades_buy[symbol]:
-            if ((((current_trade[0] - avg_price) - THRESHOLD) >= 0) and (state_manager.positions[symbol] > -50)):
-                print()
-                print("gets through sell", symbol, state_manager.positions[symbol])
-                print()
-                state_manager.new_order(symbol, Dir.SELL, current_trade[0], 1)
+            if ((((current_trade[0] - avg_price) - threshold[symbol]) >= 0) and (state_manager.positions[symbol] > -50)):
+                state_manager.new_order(symbol, Dir.SELL, current_trade[0], current_trade[1])
                 return "optimal sell order live"
     
     return "optimal sell not found"
                         
-def determine_buy(avg_stock, current_trades_sell, state_manager, THRESHOLD):
+def determine_buy(avg_stock, current_trades_sell, state_manager, threshold):
     # buying logic
+    print("checking buy")
     for symbol, avg_price in avg_stock.items():
         for current_trade in current_trades_sell[symbol]:
-            if ((((current_trade[0] - avg_price) + THRESHOLD) <= 0) and (state_manager.positions[symbol] < 50)):
-                print()
-                print("gets through buy", symbol, state_manager.positions[symbol])
-                print()
-                state_manager.new_order(symbol, Dir.BUY, current_trade[0], 1)
+            if ((((current_trade[0] - avg_price) + threshold[symbol]) <= 0) and (state_manager.positions[symbol] < 50)):
+                state_manager.new_order(symbol, Dir.BUY, current_trade[0], current_trade[1])
                 return "optimal buy order live"
 
     return "optimal buy not found"
 
 def main():
-    THRESHOLD = 9.5
+    threshold = {key: 10 for key in ["DETG", "DRYR", "QROLL", "SOFT", "UMBR", "UMBRS", "WASH"]}
 
     args = parse_arguments()
 
@@ -149,11 +165,10 @@ def main():
 
     total_trades = defaultdict(list)
     avg_stock = {}
+    past_ten = {}
 
     current_trades_buy = {}
     current_trades_sell = {}
-    
-    changed = False
 
     while True:
 
@@ -162,18 +177,20 @@ def main():
         message = exchange.read_message()
         message_ticker += 1
         
-        if len(avg_stock.keys()) == 7 and message_ticker % 2 == 0 and not state_manager.open_orders:
-            sold = determine_sell(avg_stock, current_trades_buy, state_manager, THRESHOLD)
+        if len(avg_stock.keys()) == 7 and message_ticker % 2 == 0 and not state_manager.open_orders.keys():
+            sold = determine_sell(avg_stock, current_trades_buy, state_manager, threshold)
 
             if sold == "optimal sell not found":
 
-                bought = determine_buy(avg_stock, current_trades_sell, state_manager, THRESHOLD)
+                bought = determine_buy(avg_stock, current_trades_sell, state_manager, threshold)
 
                 if bought == "optimal buy order live":
                     changed = True
 
             else:
                 changed = True
+        
+            threshold = threshold_modifier(avg_stock, past_ten)
 
         if message["type"] == "close":
             print("The round has ended")
@@ -189,9 +206,6 @@ def main():
             # print()
             print("acknowledgement of order")
             state_manager.on_ack(message)
-            print(state_manager.open_orders)
-            id = message["order_id"]
-            print(state_manager.open_orders[id].price)
 
         elif message["type"] == "out":
             state_manager.on_out(message)
@@ -208,8 +222,9 @@ def main():
             
             total_trades[cur_trade].append(tuple([message["price"], message["size"], time.time()]))
 
-            if len(total_trades) >= 5:
+            if len(total_trades[cur_trade]) >= 10:
                 avg_stock[cur_trade] = sum(trade[0] for trade in total_trades[cur_trade]) / len(total_trades[cur_trade])
+                past_ten[cur_trade] = total_trades[cur_trade][-10:]
 
         if any(value for value in state_manager.positions.values()) and changed:
             print("current positions")

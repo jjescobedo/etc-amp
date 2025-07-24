@@ -59,7 +59,7 @@ class StateManager:
         """Sends a new order and keeps track of it in our state"""
         order_id = self.next_id()
         order = Order(order_id, symbol, dir_, price, size)
-        print(f"Sending order {order}")
+        #print(f"Sending order {order}")
         order.send(self.exchange)
         self.unacked_orders[order_id] = order
 
@@ -77,7 +77,7 @@ class StateManager:
         order_id = message["order_id"]
         if order_id in self.unacked_orders:
             self.open_orders[order_id] = self.unacked_orders.pop(order_id)
-            print("Got ack on order", self.open_orders[order_id])
+            #print("Got ack on order", self.open_orders[order_id])
         else:
             print("Unexpectedly got ack on unknown order_id", order_id)
 
@@ -86,7 +86,7 @@ class StateManager:
         order_id = message["order_id"]
         if order_id in self.open_orders:
             order = self.open_orders.pop(order_id)
-            print(f"Got out on order {order}")
+            #print(f"Got out on order {order}")
         else:
             print("Unexpectedly got out on unknown order_id", order_id)
 
@@ -112,9 +112,9 @@ def determine_sell(avg_stock, current_trades_buy, state_manager, THRESHOLD):
     # selling logic
     for symbol, avg_price in avg_stock.items():
         for current_trade in current_trades_buy[symbol]:
-            if (((current_trade[0] - avg_price) - THRESHOLD) >= 0) and (current_trade[1] == 1) and (state_manager.positions[symbol] > -40):
+            if ((((current_trade[0] - avg_price) - THRESHOLD) >= 0) and (state_manager.positions[symbol] > -50)):
                 print()
-                print("gets through sell", state_manager.positions[symbol])
+                print("gets through sell", symbol, state_manager.positions[symbol])
                 print()
                 state_manager.new_order(symbol, Dir.SELL, current_trade[0], 1)
                 return "optimal sell order live"
@@ -125,9 +125,9 @@ def determine_buy(avg_stock, current_trades_sell, state_manager, THRESHOLD):
     # buying logic
     for symbol, avg_price in avg_stock.items():
         for current_trade in current_trades_sell[symbol]:
-            if (((current_trade[0] - avg_price) + THRESHOLD) <= 0) and (current_trade[1] == 1) and (state_manager.positions[symbol] < 40):
+            if ((((current_trade[0] - avg_price) + THRESHOLD) <= 0) and (state_manager.positions[symbol] < 50)):
                 print()
-                print("gets through buy", state_manager.positions[symbol])
+                print("gets through buy", symbol, state_manager.positions[symbol])
                 print()
                 state_manager.new_order(symbol, Dir.BUY, current_trade[0], 1)
                 return "optimal buy order live"
@@ -135,7 +135,7 @@ def determine_buy(avg_stock, current_trades_sell, state_manager, THRESHOLD):
     return "optimal buy not found"
 
 def main():
-    THRESHOLD = 10
+    THRESHOLD = 9.5
 
     args = parse_arguments()
 
@@ -162,7 +162,7 @@ def main():
         message = exchange.read_message()
         message_ticker += 1
         
-        if len(avg_stock.keys()) == 7 and message_ticker % 2 == 0:
+        if len(avg_stock.keys()) == 7 and message_ticker % 2 == 0 and not state_manager.open_orders:
             sold = determine_sell(avg_stock, current_trades_buy, state_manager, THRESHOLD)
 
             if sold == "optimal sell not found":
@@ -186,16 +186,17 @@ def main():
             print(message)
 
         elif message["type"] == "ack":
-            print()
+            # print()
             print("acknowledgement of order")
             state_manager.on_ack(message)
+            print(state_manager.open_orders)
+            id = message["order_id"]
+            print(state_manager.open_orders[id].price)
 
         elif message["type"] == "out":
-            "removing order"
             state_manager.on_out(message)
 
         elif message["type"] == "fill":
-            "completing order"
             state_manager.on_fill(message)
 
         elif message["type"] == "book":

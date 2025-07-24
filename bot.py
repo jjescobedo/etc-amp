@@ -112,7 +112,7 @@ def determine_sell(avg_stock, current_trades_buy, state_manager, THRESHOLD):
     # selling logic
     for symbol, avg_price in avg_stock.items():
         for current_trade in current_trades_buy[symbol]:
-            if ((((current_trade[0] - avg_price) - THRESHOLD) >= 0) and (current_trade[1] == 1) and (state_manager.positions[symbol] > -10)):
+            if ((((current_trade[0] - avg_price) - THRESHOLD) >= 0) and (state_manager.positions[symbol] > -50)):
                 print()
                 print("gets through sell", symbol, state_manager.positions[symbol])
                 print()
@@ -125,7 +125,7 @@ def determine_buy(avg_stock, current_trades_sell, state_manager, THRESHOLD):
     # buying logic
     for symbol, avg_price in avg_stock.items():
         for current_trade in current_trades_sell[symbol]:
-            if ((((current_trade[0] - avg_price) + THRESHOLD) <= 0) and (current_trade[1] == 1) and (state_manager.positions[symbol] < 10)):
+            if ((((current_trade[0] - avg_price) + THRESHOLD) <= 0) and (state_manager.positions[symbol] < 50)):
                 print()
                 print("gets through buy", symbol, state_manager.positions[symbol])
                 print()
@@ -135,7 +135,7 @@ def determine_buy(avg_stock, current_trades_sell, state_manager, THRESHOLD):
     return "optimal buy not found"
 
 def main():
-    THRESHOLD = 5
+    THRESHOLD = 9.5
 
     args = parse_arguments()
 

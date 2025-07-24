@@ -11,3 +11,5 @@
 .sudo_as_admin_successful
 .viminfo
 .wget-hsts
+.python_history
+.venv

@@ -5,20 +5,15 @@
 # 3) Run in loop: while true; do ./bot.py --test prod-like; sleep 1; done
 
 import argparse
-from collections import deque
+from collections import deque, defaultdict
 from enum import Enum
 import time
 import socket
 import json
 
-# libs for animating ticker
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from matplotlib import style
-
 # ~~~~~============== CONFIGURATION  ==============~~~~~
-# Replace "REPLACEME" with your team name!
-team_name = "CHARIZARD"
+
+team_name = "JAMESE"
 
 # ~~~~~============== MAIN LOOP ==============~~~~~
 
@@ -49,9 +44,9 @@ class StateManager:
         """Set up data structures to keep track of various trading bot states,
         like positions, orders and so on"""
         self.exchange = exchange
-        self.positions = {}
-        self.unacked_orders = {}
-        self.open_orders = {}
+        self.positions = {} # stocks we have
+        self.unacked_orders = {} # orders not yet live
+        self.open_orders = {} # orders that are live
         # Start ids at -1 because we always increment when getting the next ID
         self.cur_id = -1
 
@@ -114,62 +109,84 @@ class StateManager:
             )
 
 
+
 def main():
+    THRESHOLD = 5
+
     args = parse_arguments()
 
     exchange = ExchangeConnection(args=args)
     state_manager = StateManager(exchange)
 
-    # Store and print the "hello" message received from the exchange. This
-    # contains useful information about your positions. Normally you start with
-    # all positions at zero, but if you reconnect during a round, you might
-    # have already bought/sold symbols and have non-zero positions.
     hello_message = exchange.read_message()
     state_manager.on_hello(hello_message)
 
-    # Uncomment the following two lines! This will send two QROLL orders: one to buy 100
-    # QROLL for $950, and the other to sell 100 QROLL for $1050.
-    #
-    # state_manager.new_order("QROLL", Dir.BUY, 950, 100)
-    # state_manager.new_order("QROLL", Dir.SELL, 1050, 100)
+    state_manager.new_order("QROLL", Dir.BUY, 950, 100)
+    state_manager.new_order("QROLL", Dir.SELL, 1050, 100)
 
-    # Here is the main loop of the program. It will continue to read and
-    # process messages in a loop until a "close" message is received. You
-    # should write to code handle more types of messages (and not just print
-    # the message). Feel free to modify any of the starter code below.
-    #
-    # Note: a common mistake people make is to call write_message() at least
-    # once for every read_message() response.
-    #
-    # Every message sent to the exchange generates at least one response
-    # message. Sending a message in response to every exchange message will
-    # cause a feedback loop where your bot's messages will quickly be
-    # rate-limited and ignored. Please, don't do that!
+
+
+    total_trades = defaultdict(list)
+    avg_last_trades = {}
+
+    current_trades_buy = {}
+    current_trades_sell = {}
+
     while True:
-        message = exchange.read_message()
 
-        # Some of the message types below happen infrequently and contain
-        # important information to help you understand what your bot is doing,
-        # so they are printed in full. We recommend not always printing every
-        # message because it can be a lot of information to read. Instead, let
-        # your code handle the messages and just print the information
-        # important for you!
+        message = exchange.read_message()
+        
+        if len(avg_last_trades.keys()) == 7:
+            # selling logic
+            for symbol, avg_price in avg_last_trades.items():
+                for current_trade in current_trades_buy[symbol]:
+                    if current_trade[0] - avg_price - THRESHOLD >= 0 and current_trade[1] == 1:
+                        state_manager.new_order(symbol, Dir.SELL, current_trade[0], 1)
+            
+            # buying logic
+            for symbol, avg_price in avg_last_trades.items():
+                for current_trade in current_trades_sell[symbol]:
+                    if current_trade[0] - avg_price + THRESHOLD <= 0 and current_trade[1] == 1:
+                        state_manager.new_order(symbol, Dir.BUY, current_trade[0], 1)
+
         if message["type"] == "close":
             print("The round has ended")
             break
+
         elif message["type"] == "error":
             print(message)
+
         elif message["type"] == "reject":
             print(message)
-        elif message["type"] == "ack":
-            state_manager.on_ack(message)
-        elif message["type"] == "out":
-            state_manager.on_out(message)
-        elif message["type"] == "fill":
-            state_manager.on_fill(message)
-        elif message["type"] == "book":
-            pass
 
+        elif message["type"] == "ack":
+            print()
+            print("acknowledgement of order")
+            state_manager.on_ack(message)
+
+        elif message["type"] == "out":
+            "removing order"
+            state_manager.on_out(message)
+
+        elif message["type"] == "fill":
+            "completing order"
+            state_manager.on_fill(message)
+
+        elif message["type"] == "book":
+            current_trades_buy[message["symbol"]] = message["buy"]
+            current_trades_sell[message["symbol"]] = message["sell"]
+
+        elif message["type"] == "trade":
+            cur_trade = message["symbol"]
+            
+            total_trades[cur_trade].append(tuple([message["price"], message["size"], time.time()]))
+
+            if len(total_trades) >= 5:
+                avg_last_trades[cur_trade] = sum(trade[0] for trade in total_trades[cur_trade][-5:]) // 5
+
+        if any(value for value in state_manager.positions.values()):
+            print("current positions")
+            print(state_manager.positions)
 
 # ~~~~~============== PROVIDED CODE ==============~~~~~
 
@@ -177,11 +194,9 @@ def main():
 # ask if you have any questions about what it is doing or how it works. If you
 # do need to change anything below this line, please feel free to
 
-
 class Dir(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
-
 
 class ExchangeConnection:
     def __init__(self, args):
@@ -267,7 +282,6 @@ class ExchangeConnection:
                 "WARNING: You are sending messages too frequently. The exchange will start ignoring your messages. Make sure you are not sending a message in response to every exchange message."
             )
 
-
 def parse_arguments():
     test_exchange_port_offsets = {"prod-like": 0, "slower": 1, "empty": 2}
 
@@ -276,6 +290,7 @@ def parse_arguments():
     exchange_address_group.add_argument(
         "--production", action="store_true", help="Connect to the production exchange."
     )
+
     exchange_address_group.add_argument(
         "--test",
         type=str,
@@ -294,22 +309,24 @@ def parse_arguments():
     if args.production:
         args.exchange_hostname = "production"
         args.port = 25000
+
     elif args.test:
         args.exchange_hostname = "test-exch-" + team_name
         args.port = 22000 + test_exchange_port_offsets[args.test]
+
         if args.test == "empty":
             args.add_socket_timeout = False
+
     elif args.specific_address:
         args.exchange_hostname, port = args.specific_address.split(":")
         args.port = int(port)
 
     return args
 
-
 if __name__ == "__main__":
     # Check that [team_name] has been updated.
     assert (
         team_name != "REPLAC" + "EME"
     ), "Please put your team name in the variable [team_name]."
-
+    
     main()

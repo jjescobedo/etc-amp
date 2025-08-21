@@ -109,24 +109,6 @@ class StateManager:
                 order_id,
             )
 
-def threshold_modifier(avg_stock, past_ten):
-    threshold = {}
-
-    for symbol, avg_price in avg_stock.items():
-        diff = abs(past_ten[symbol][0][0] - past_ten[symbol][-1][0])
-        if diff < 5:
-            threshold[symbol] = 6
-        elif diff < 10:
-            threshold[symbol] = 8
-        elif diff < 15:
-            threshold[symbol] = 10
-        elif diff < 20:
-            threshold[symbol] = 12
-        else:
-            threshold[symbol] = 15
-    
-    print("threshold", threshold)
-    return threshold
 
 def determine_sell(avg_stock, current_trades_buy, state_manager, threshold):
     # selling logic
@@ -152,79 +134,58 @@ def determine_buy(avg_stock, current_trades_sell, state_manager, threshold):
 
 def main():
     threshold = {key: 10 for key in ["DETG", "DRYR", "QROLL", "SOFT", "UMBR", "UMBRS", "WASH"]}
-
     args = parse_arguments()
-
     exchange = ExchangeConnection(args=args)
     state_manager = StateManager(exchange)
-
     hello_message = exchange.read_message()
     state_manager.on_hello(hello_message)
-
     message_ticker = 0
-
     total_trades = defaultdict(list)
     avg_stock = {}
-    past_ten = {}
-
     current_trades_buy = {}
     current_trades_sell = {}
 
+    def weighted_average(trades):
+        total_weight = sum(trade[1] for trade in trades)
+        if total_weight == 0:
+            return 0
+        return sum(trade[0] * trade[1] for trade in trades) / total_weight
+
     while True:
-
         changed = False
-
         message = exchange.read_message()
         message_ticker += 1
-        
+
         if len(avg_stock.keys()) == 7 and message_ticker % 2 == 0 and not state_manager.open_orders.keys():
             sold = determine_sell(avg_stock, current_trades_buy, state_manager, threshold)
-
             if sold == "optimal sell not found":
-
                 bought = determine_buy(avg_stock, current_trades_sell, state_manager, threshold)
-
                 if bought == "optimal buy order live":
                     changed = True
-
             else:
                 changed = True
-        
-            threshold = threshold_modifier(avg_stock, past_ten)
 
         if message["type"] == "close":
             print("The round has ended")
             break
-
         elif message["type"] == "error":
             print(message)
-
         elif message["type"] == "reject":
             print(message)
-
         elif message["type"] == "ack":
-            # print()
             print("acknowledgement of order")
             state_manager.on_ack(message)
-
         elif message["type"] == "out":
             state_manager.on_out(message)
-
         elif message["type"] == "fill":
             state_manager.on_fill(message)
-
         elif message["type"] == "book":
             current_trades_buy[message["symbol"]] = message["buy"]
             current_trades_sell[message["symbol"]] = message["sell"]
-
         elif message["type"] == "trade":
             cur_trade = message["symbol"]
-            
-            total_trades[cur_trade].append(tuple([message["price"], message["size"], time.time()]))
-
-            if len(total_trades[cur_trade]) >= 10:
-                avg_stock[cur_trade] = sum(trade[0] for trade in total_trades[cur_trade]) / len(total_trades[cur_trade])
-                past_ten[cur_trade] = total_trades[cur_trade][-10:]
+            total_trades[cur_trade].append((message["price"], message["size"], time.time()))
+            avg_stock[cur_trade] = weighted_average(total_trades[cur_trade][-10:]) if len(total_trades[cur_trade]) >= 10 else weighted_average(total_trades[cur_trade])
 
         if any(value for value in state_manager.positions.values()) and changed:
             print("current positions")
